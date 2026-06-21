@@ -121,23 +121,64 @@ interface ModelsJson {
 
 // ── Thinking Template Support ─────────────────────────────────────────
 
-// llama.cpp template thinking is boolean, so expose Pi's default off/medium toggle only.
-const TEMPLATE_THINKING_LEVEL_MAP = {
+// Thinking budget (tokens) mapped from Pi thinking levels.
+// Injected as thinking_budget_tokens in the request body for llama-cpp providers.
+// off: rely on enable_thinking: false (no budget injection)
+// xhigh: unrestricted (server default -1, no budget injection)
+const THINKING_BUDGET_MAP: Record<string, number | undefined> = {
+  off: undefined,
+  low: 512,
+  medium: 2048,
+  high: 8192,
+  xhigh: undefined,
+};
+
+// Qwen-style: chat_template_kwargs.enable_thinking (boolean toggle).
+// Pi's qwen-chat-template format sends enable_thinking based on reasoning effort.
+// String values expose levels in UI; Pi sends enable_thinking: false for off level.
+// Granularity is controlled by thinking_budget_tokens injection in before_provider_request hook.
+const QWEN_THINKING_LEVEL_MAP = {
+  off: "off",
   minimal: null,
-  low: null,
-  high: null,
-  xhigh: null,
+  low: "on",
+  medium: "on",
+  high: "on",
+  xhigh: "on",
 } satisfies NonNullable<ProviderModelConfig["thinkingLevelMap"]>;
 
-// Mark a model config as using llama.cpp's chat_template_kwargs.enable_thinking control.
-function applyTemplateThinkingSupport(model: Record<string, any>): void {
+// DeepSeek-style: chat_template_kwargs.thinking (effort string).
+// Maps every Pi level to a distinct effort value via chatTemplateKwargs.
+const CHAT_TEMPLATE_THINKING_LEVEL_MAP = {
+  off: null,
+  minimal: "minimal",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "max",
+} satisfies NonNullable<ProviderModelConfig["thinkingLevelMap"]>;
+
+// Apply Qwen-style thinking (enable_thinking boolean toggle).
+function applyQwenThinkingSupport(model: Record<string, any>): void {
   model.reasoning = true;
-  model.thinkingLevelMap = TEMPLATE_THINKING_LEVEL_MAP;
+  model.thinkingLevelMap = QWEN_THINKING_LEVEL_MAP;
   model.compat = {
     ...model.compat,
     // Despite the Pi enum name, this sends llama.cpp's generic
     // chat_template_kwargs.enable_thinking payload, not a Qwen-only option.
     thinkingFormat: "qwen-chat-template",
+  };
+}
+
+// Apply chat-template style thinking (thinking effort string + chatTemplateKwargs).
+function applyChatTemplateThinkingSupport(model: Record<string, any>): void {
+  model.reasoning = true;
+  model.thinkingLevelMap = CHAT_TEMPLATE_THINKING_LEVEL_MAP;
+  model.compat = {
+    ...model.compat,
+    thinkingFormat: "chat-template",
+    chatTemplateKwargs: {
+      "thinking": { "$var": "thinking.effort", omitWhenOff: true },
+    },
   };
 }
 
@@ -949,7 +990,7 @@ const pendingMetadata = new Set<string>();
 
 interface ModelMetadata {
   [serverId: string]: {
-    [modelId: string]: { thinking?: boolean; contextWindow?: number };
+    [modelId: string]: { thinking?: boolean | string; contextWindow?: number };
   };
 }
 
@@ -994,7 +1035,7 @@ function cleanupStaleMetadata(validModels: Map<string, Set<string>>): void {
   }
 }
 
-function persistModelMetadata(serverId: string, modelId: string, data: { thinking?: boolean; contextWindow?: number }): void {
+function persistModelMetadata(serverId: string, modelId: string, data: { thinking?: boolean | string; contextWindow?: number }): void {
   const overlay = loadMetadataOverlay();
   if (!overlay[serverId]) overlay[serverId] = {};
   const existing = overlay[serverId][modelId] || {};
@@ -1007,7 +1048,12 @@ function applyMetadataOverlay(model: ProviderModelConfig, serverId: string): voi
   const entry = overlay[serverId]?.[model.id];
   if (!entry) return;
   if (entry.thinking) {
-    applyTemplateThinkingSupport(model as Record<string, any>);
+    if (entry.thinking === "chat-template") {
+      applyChatTemplateThinkingSupport(model as Record<string, any>);
+    } else {
+      // Legacy boolean or "qwen-chat-template" → Qwen-style
+      applyQwenThinkingSupport(model as Record<string, any>);
+    }
   }
   if (entry.contextWindow) {
     model.contextWindow = entry.contextWindow;
@@ -1054,13 +1100,15 @@ async function discoverModelMetadata(
 
     const data = await response.json();
     let updated = false;
-    const metadata: { thinking?: boolean; contextWindow?: number } = {};
+    const metadata: { thinking?: boolean | string; contextWindow?: number } = {};
 
     if (data?.chat_template?.includes("enable_thinking") === true) {
-      metadata.thinking = true;
-      if (pi.getThinkingLevel() === "off") {
-        pi.setThinkingLevel("medium");
-      }
+      metadata.thinking = true; // Qwen-style boolean toggle
+      updated = true;
+    } else if (/\{[%{]\s*thinking\b/.test(data?.chat_template || "")) {
+      // DeepSeek-style: chat_template_kwargs.thinking (effort string)
+      // Matches {{ thinking }}, {% if thinking %}, {% set thinking = ..., etc.
+      metadata.thinking = "chat-template";
       updated = true;
     }
 
@@ -1147,6 +1195,22 @@ export default function llamaStatusExtension(pi: ExtensionAPI) {
   });
 
   // ── Event Handlers ──────────────────────────────────────────────────
+
+  // Inject thinking_budget_tokens for llama-cpp reasoning models
+  pi.on("before_provider_request", (event, ctx) => {
+    const provider = (ctx.model as any)?.provider;
+    if (!PROVIDER_IDS.includes(provider || "")) return;
+    if (!(ctx.model as any)?.reasoning) return;
+
+    const level = pi.getThinkingLevel();
+    const budget = THINKING_BUDGET_MAP[level];
+    if (budget === undefined) return;
+
+    return {
+      ...event.payload,
+      thinking_budget_tokens: budget,
+    };
+  });
 
   // /props metadata after first successful provider response
   // (model is guaranteed loaded by this point — no race with model loading)

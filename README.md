@@ -41,6 +41,15 @@ On `session_start`, syncs model metadata to `~/.pi/agent/models.json`.
 - Filters out auto-exposed HF cache entries (undefined models like `unsloth/Qwen3.6-27B-MTP-GGUF:Q4_K_XL`)
 - Removes provider entries for servers no longer configured (e.g., remote URL unset)
 
+## Thinking Support
+
+Autodetects thinking capability from each model's chat template via `/props`:
+
+- **Qwen-style** (`enable_thinking` variable) → boolean toggle, `thinkingFormat: "qwen-chat-template"`. Only off/medium exposed.
+- **DeepSeek-style** (`thinking` variable) → effort string via `chatTemplateKwargs`, `thinkingFormat: "chat-template"`. Full level mapping (off/minimal/low/medium/high/xhigh).
+
+Discovered metadata is persisted to `llama-metadata.json` and applied on every model sync.
+
 ## Architecture
 
 - `rpc(server, endpoint, body?)` — per-server HTTP client (all API calls go through this)
