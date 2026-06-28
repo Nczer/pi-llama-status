@@ -31,6 +31,23 @@ Priority order: `.pi/llama-server.json` → `LLAMA_SERVER_URL` env → `settings
 
 `settings.json` (`llamaServerRemoteUrl`) → omitted if not set. Set to `""` to explicitly disable.
 
+## Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `llamaStatusEnabled` | `true` | Toggle extension on/off via `/llama-status` |
+| `llamaServerUrl` | `http://127.0.0.1:8080` | Local server URL (overridden by env var) |
+| `llamaServerRemoteUrl` | None | Remote server URL (opt-in) |
+
+## SSE Loading Progress
+
+Connects to `/models/sse` to show real-time loading progress in the status bar:
+
+- **Stages**: `fit_params` → `text_model` → `mmproj_model` (for vision models)
+- **Display**: `Loading model 42%`, `Loading mmproj 78%`, etc.
+- **Reconnect**: Auto-reconnects with exponential backoff (up to 10 attempts, capped at 30s)
+- **Cleanup**: SSE connection stops when session ends or model switches away from llama.cpp
+
 ## Auto-Sync
 
 On `session_start`, syncs model metadata to `~/.pi/agent/models.json`.
