@@ -987,7 +987,7 @@ async function syncToModelsJson(): Promise<boolean> {
   }
 
   // Prune metadata for removed/renamed models (only for reachable servers)
-  cleanupStaleMetadata(validModels, serverInfo.map((s) => s.server.id));
+  cleanupStaleMetadata(validModels, serverInfo.filter((s) => s.ready).map((s) => s.server.id));
 
   return wrote;
 }
