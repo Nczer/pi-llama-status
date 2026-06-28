@@ -1028,8 +1028,8 @@ const SSE_INITIAL_RECONNECT_MS = 1000;
 /** Stage name → human-readable label */
 const STAGE_LABELS: Record<string, string> = {
   "fit_params": "fitting params",
-  "text_model": "loading model",
-  "mmproj_model": "loading mmproj",
+  "text_model": "model",
+  "mmproj_model": "mmproj",
 };
 
 /** Format a stage name for display */
@@ -1061,7 +1061,7 @@ function formatLoadingProgress(state: ModelLoadState, theme: any): string {
   }
 
   if (state.status === "loading") {
-    return `${dim("· ")}${accent("Loading")} ${dim("model...")}`;
+    return `${dim("· ")}${accent("Loading")} ${dim("...")}`;
   }
 
   if (state.status === "loaded") {
